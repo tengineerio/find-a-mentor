@@ -1,27 +1,18 @@
-import React from 'react';
+import React, {useContext} from 'react';
 import Obfuscate from 'react-obfuscate';
-import { orderBy } from 'lodash';
+import orderBy from 'lodash/orderBy';
 import './Card.css';
 import { getChannelInfo } from '../../channelProvider';
 import classNames from 'classnames';
-import countries from 'svg-country-flags/countries.json';
-
-const generateMentorId = name => {
-  return name.replace(/\s/g, '-');
-};
+import { report } from '../../ga';
+import auth from '../../utils/auth';
+import { Tooltip } from 'react-tippy';
+import messages from '../../messages';
+import { useFilters } from '../../context/filtersContext/FiltersContext';
+import UserContext from '../../context/userContext/UserContext';
 
 function handleAnalytic(channelName) {
-  if (window && window.ga) {
-    const { ga } = window;
-
-    ga('send', {
-      hitType: 'event',
-      eventCategory: 'Channel',
-      eventAction: 'click',
-      eventLabel: channelName,
-      transport: 'beacon',
-    });
-  }
+  report('Channel', 'click', channelName);
 }
 
 const tagsList = (tags, handleTagClick) =>
@@ -38,7 +29,28 @@ const tagsList = (tags, handleTagClick) =>
     );
   });
 
+const applyOnClick = () => {
+  handleAnalytic('apply');
+  auth.login();
+};
+
+const nonLoggedinChannels = () => {
+  return (
+    <Tooltip title={messages.CARD_APPLY_TOOLTIP} size="big" arrow={true}>
+      <button onClick={applyOnClick}>
+        <div className="icon">
+          <i className="fa fa-hand-o-right fa-lg" />
+        </div>
+        <p className="type">Apply</p>
+      </button>
+    </Tooltip>
+  );
+};
+
 const channelsList = channels => {
+  if (!auth.isAuthenticated()) {
+    return nonLoggedinChannels();
+  }
   const orderedChannels = orderBy(channels, ['type'], ['asc']);
   return orderedChannels.map(channel => {
     const { icon, url } = getChannelInfo(channel);
@@ -76,69 +88,119 @@ const channelsList = channels => {
   });
 };
 
-const Avatar = ({ mentor }) => {
+const Avatar = ({ mentor, id, handleAvatarClick }) => {
   return (
-    <div className="avatar">
+    <button className="avatar" onClick={handleAvatarClick}>
       <i className="fa fa-user-circle" />
       <img
         src={mentor.avatar}
-        aria-labelledby={`${generateMentorId(mentor.name)}-name`}
-        alt=""
+        aria-labelledby={`${id}`}
+        alt={`${mentor.name}`}
+        onError={e => e.currentTarget.classList.add('broken')}
       />
-    </div>
+    </button>
   );
 };
 
-const LikeButton = ({ onClick, liked }) => (
-  <button onClick={onClick} className="like-button" aria-label="Save Mentor">
-    <i
-      className={classNames([
-        'fa',
-        { 'liked fa-heart': liked, 'fa-heart-o': !liked },
-      ])}
-    />
-  </button>
+const LikeButton = ({ onClick, liked, tooltip }) => (
+  <Tooltip disabled={!tooltip} title={tooltip} size="big" arrow={true}>
+    <button onClick={onClick} className="like-button" aria-label="Save Mentor">
+      <i
+        className={classNames([
+          'fa',
+          { 'liked fa-heart': liked, 'fa-heart-o': !liked },
+        ])}
+      />
+    </button>
+  </Tooltip>
 );
 
-const Info = ({ mentor, handleTagClick }) => {
-  // Don't show the description if it's not provided.
+const Card = ({ mentor, onFavMentor, isFav }) => {
+  const [, dispatch] = useFilters();
+  const { currentUser } = useContext(UserContext);
+
+  const toggleFav = () => {
+    if (currentUser) {
+      isFav = !isFav;
+      onFavMentor(mentor);
+    } else {
+      auth.login();
+    }
+  };
+
+  const handleTagClick = tag => {
+    dispatch({ type: 'filterTag', payload: tag });
+  };
+  const handleAvatarClick = name => {
+    dispatch({ type: 'filterName', payload: name });
+  };
+  const handleCountryClick = country => {
+    dispatch({ type: 'filterCountry', payload: country });
+  };
+
+  // don't show the description if it's not provided
   const description = mentor.description ? (
     <p className="description">"{mentor.description}"</p>
   ) : (
     <React.Fragment />
   );
 
-  return (
-    <React.Fragment>
-      <h1 className="name" id={`${generateMentorId(mentor.name)}-name`}>
-        {mentor.name}
-      </h1>
-      <h4 className="title">{mentor.title}</h4>
-      {description}
-      <div className="tags">{tagsList(mentor.tags, handleTagClick)}</div>
-      <div className="channels">
-        <div className="channel-inner">{channelsList(mentor.channels)}</div>
-      </div>
-    </React.Fragment>
-  );
-};
-
-const Card = ({ mentor, onFavMentor, isFav, handleTagClick }) => {
-  const toggleFav = () => {
-    isFav = !isFav;
-    onFavMentor(mentor);
+  const MentorInfo = () => {
+    return (
+      <>
+        <div>
+          <h2 className="name" id={`${mentor._id}`}>
+            {mentor.name}
+          </h2>
+          <h4 className="title">{mentor.title}</h4>
+          {description}
+        </div>
+      </>
+    );
   };
 
+  const SkillsTags = () => {
+    return <div className="tags">{tagsList(mentor.tags, handleTagClick)}</div>;
+  };
+
+  const CardFooter = () => {
+    return (
+      <>
+        <div className="wave" />
+        <div className="channels">
+          <div className="channel-inner">{channelsList(mentor.channels)}</div>
+        </div>
+      </>
+    );
+  };
+
+  const CardHeader = () => {
+    const tooltip = currentUser ? null : messages.CARD_ANONYMOUS_LIKE_TOOLTIP;
+    return (
+      <div className="header">
+        <button
+          className="country location"
+          onClick={() => handleCountryClick(mentor.country)}
+        >
+          <i className={'fa fa-map-marker'} />
+          <p>{mentor.country}</p>
+        </button>
+
+        <Avatar
+          mentor={mentor}
+          id={mentor._id}
+          handleAvatarClick={handleAvatarClick.bind(null, mentor.name)}
+        />
+        <LikeButton onClick={toggleFav} liked={isFav} tooltip={tooltip} />
+      </div>
+    );
+  };
   return (
-    <div className="card" aria-label="Mentor card">
-      <LikeButton onClick={toggleFav} liked={isFav} />
-      <img
-        className="country"
-        src={`https://www.countryflags.io/${mentor.country}/flat/32.png`}
-        alt={countries[mentor.country]}
-      />
-      <Avatar mentor={mentor} />
-      <Info mentor={mentor} handleTagClick={handleTagClick} />
+    <div className="card" aria-label="Mentor card" data-testid="mentor-card">
+      <CardHeader />
+      <MentorInfo />
+      <SkillsTags />
+      <CardFooter />
     </div>
   );
 };
